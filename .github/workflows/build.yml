@@ -163,7 +163,7 @@ jobs:
         id: version
         run: |
           INPUT="${{ github.event.inputs.flutter_version }}"
-          VERSION=$(python3 build.py resolve_version --version="$INPUT")
+          VERSION=$(python3 build.py resolve_version --version="$INPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "FLUTTER_VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Resolved Flutter version: $VERSION"
 
