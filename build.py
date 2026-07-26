@@ -10,7 +10,7 @@ Usage:
   python3 build.py sync                     # gclient sync only
   python3 build.py install_sysroot          # install ARM64 sysroot only
   python3 build.py configure                # GN configure only
-  python3 build.py build                    # ninja build only
+  python3 build.py build                    # ninja build only (with detailed errors)
   python3 build.py assemble                 # assemble SDK + create stamps
   python3 build.py package                  # package as tarball
 """
@@ -166,7 +166,13 @@ def sync(cfg_path: str = "config.toml") -> None:
 
     cmd = ["gclient", "sync", "-DR", "--no-history"]
     logger.info(f"Running: {' '.join(cmd)}")
-    subprocess.run(cmd, cwd=str(flutter_root), check=True)
+    try:
+        subprocess.run(cmd, cwd=str(flutter_root), check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        logger.error("=== gclient sync failed ===")
+        logger.error(f"STDOUT:\n{e.stdout}")
+        logger.error(f"STDERR:\n{e.stderr}")
+        raise
     logger.info("✓ gclient sync complete.")
 
 def install_sysroot(arch: str = "arm64", cfg_path: str = "config.toml") -> Path:
@@ -198,11 +204,19 @@ def install_sysroot(arch: str = "arm64", cfg_path: str = "config.toml") -> Path:
     if sysroot_script.exists():
         gn_arch = ARCH_GN.get(arch, arch)
         logger.info(f"Installing sysroot via engine script (arch={arch}) ...")
-        subprocess.run(
-            ["python3", str(sysroot_script), "--arch", gn_arch],
-            cwd=str(flutter_root),
-            check=True,
-        )
+        try:
+            subprocess.run(
+                ["python3", str(sysroot_script), "--arch", gn_arch],
+                cwd=str(flutter_root),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error("=== install-sysroot.py failed ===")
+            logger.error(f"STDOUT:\n{e.stdout}")
+            logger.error(f"STDERR:\n{e.stderr}")
+            raise
         # Locate the installed sysroot
         for sysroot_name in [
             f"debian_bullseye_{arch}-sysroot",
@@ -295,7 +309,13 @@ def configure(
         if lto:
             cmd.append("--lto")
 
-        subprocess.run(cmd, cwd=str(flutter_root), check=True)
+        try:
+            subprocess.run(cmd, cwd=str(flutter_root), check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"=== GN configure failed for {arch}/{mode} ===")
+            logger.error(f"STDOUT:\n{e.stdout}")
+            logger.error(f"STDERR:\n{e.stderr}")
+            raise
         logger.info(f"✓ Configured {arch}/{mode}")
 
 def build(
@@ -304,7 +324,12 @@ def build(
     jobs: int = 0,
     cfg_path: str = "config.toml",
 ) -> None:
-    """Run ninja to build the Flutter engine and Dart SDK."""
+    """
+    Run ninja to build the Flutter engine and Dart SDK.
+
+    If ninja fails, the full stdout/stderr (including compiler errors) are
+    printed to the log for debugging.
+    """
     cfg = load_config(cfg_path)
     flutter_root = _flutter_root(cfg)
     build_cfg = cfg.get("build", {})
@@ -316,8 +341,22 @@ def build(
     for mode in modes:
         out = _out_dir(cfg, arch, mode)
         logger.info(f"Building {arch}/{mode} → {out} (jobs={_jobs}) ...")
-        cmd = ["ninja", "-C", str(out), "flutter", f"-j{_jobs}"]
-        subprocess.run(cmd, check=True)
+        # Use -v to get verbose compiler command lines, and capture output
+        cmd = ["ninja", "-C", str(out), "flutter", f"-j{_jobs}", "-v"]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"=== ninja build failed for {arch}/{mode} (exit {e.returncode}) ===")
+            logger.error("=== STDOUT ===")
+            logger.error(e.stdout)
+            logger.error("=== STDERR ===")
+            logger.error(e.stderr)
+            # Also log the last 50 lines of stdout/stderr for quick glance
+            logger.error("=== Last 50 lines of STDOUT ===")
+            logger.error("\n".join(e.stdout.splitlines()[-50:]))
+            logger.error("=== Last 50 lines of STDERR ===")
+            logger.error("\n".join(e.stderr.splitlines()[-50:]))
+            raise
         logger.info(f"✓ Built {arch}/{mode}")
 
 def assemble(
@@ -375,6 +414,8 @@ def package(
         subprocess.run(
             ["tar", "-czf", str(out_path), "-C", str(flutter_root.parent), flutter_root.name],
             check=True,
+            capture_output=True,
+            text=True,
         )
     elif fmt == "zip":
         shutil.make_archive(str(out_path.with_suffix("")), "zip", str(flutter_root.parent), flutter_root.name)
