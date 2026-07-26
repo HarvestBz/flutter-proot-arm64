@@ -8,11 +8,11 @@ on:
           Flutter version or channel: "stable", "beta", "main", or a tag like "3.29.2".
           Leave empty to use config.toml default.
         required: false
-        default: ""
+        default: ''
       arch:
-        description: "Target architecture"
+        description: 'Target architecture'
         required: false
-        default: "arm64"
+        default: 'arm64'
         type: choice
         options:
           - arm64
@@ -20,16 +20,16 @@ on:
       runtimes:
         description: "Build runtimes (comma-separated). Use only 'release' to save ~40 GB of disk."
         required: false
-        default: "release"
+        default: 'release'
       lto:
-        description: "Enable Link-Time Optimization (smaller binary, longer build)"
+        description: 'Enable Link-Time Optimization (smaller binary, longer build)'
         required: false
         default: false
         type: boolean
 
 env:
-  FLUTTER_STORAGE_BASE_URL: "https://storage.googleapis.com"
-  PUB_HOSTED_URL: "https://pub.dartlang.org"
+  FLUTTER_STORAGE_BASE_URL: 'https://storage.googleapis.com'
+  PUB_HOSTED_URL: 'https://pub.dartlang.org'
 
 jobs:
   build:
@@ -45,59 +45,65 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@v10
         with:
-          root-reserve-mb: 10240        # keep 10 GB for OS, apt, tools, runner logs
+          root-reserve-mb: 10240 # keep 10 GB for OS, apt, tools, runner logs
           swap-size-mb: 4096
-          remove-dotnet: "true"
-          remove-haskell: "true"
-          remove-android: "true"
-          remove-codeql: "true"
-          remove-docker-images: "true"
-          build-mount-path: "/mnt/build"
+          remove-dotnet: 'true'
+          remove-haskell: 'true'
+          remove-android: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          build-mount-path: '/mnt/build'
 
       # ── 2. Aggressive pre-build cleanup ────────────────────────────────────
       # IMPORTANT: apt-get needs free space to write /var/lib/apt/lists/.
       # We MUST free disk with rm -rf FIRST, before any apt command.
       - name: Extra disk cleanup
-        run: |
-          # ── Phase 1: raw deletes (no apt needed, frees space immediately) ──
-          sudo systemctl stop docker.socket docker.service || true
-          sudo rm -rf \
-            /var/lib/docker \
-            /var/lib/containerd \
-            /var/lib/apt/lists/* \
-            /var/cache/apt/archives \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /opt/hostedtoolcache \
-            /usr/local/share/boost \
-            /usr/share/swift \
-            /usr/local/julia* \
-            /usr/share/kotlinc \
-            /usr/local/lib/node_modules \
-            /usr/lib/google-cloud-sdk \
-            /usr/lib/jvm \
-            /usr/share/gradle* \
-            /usr/share/miniconda \
-            /usr/local/aws-cli \
-            /usr/local/aws-sam-cli \
-            /tmp/*
+  run: |
+    # ── Phase 1: raw deletes (不变) ──────────────────
+    sudo systemctl stop docker.socket docker.service || true
+    sudo rm -rf \
+      /var/lib/docker \
+      /var/lib/containerd \
+      /var/lib/apt/lists/* \
+      /var/cache/apt/archives \
+      /usr/share/dotnet \
+      /usr/local/lib/android \
+      /opt/ghc \
+      /opt/hostedtoolcache \
+      /usr/local/share/boost \
+      /usr/share/swift \
+      /usr/local/julia* \
+      /usr/share/kotlinc \
+      /usr/local/lib/node_modules \
+      /usr/lib/google-cloud-sdk \
+      /usr/lib/jvm \
+      /usr/share/gradle* \
+      /usr/share/miniconda \
+      /usr/local/aws-cli \
+      /usr/local/aws-sam-cli \
+      /tmp/*
+    echo "=== Disk after phase-1 rm cleanup ==="
+    df -h
 
-          echo "=== Disk after phase-1 rm cleanup ==="
-          df -h
+    # ── Phase 2: 安全的 apt 操作 ──────────────────────
+    # 修复 dpkg 状态并锁定 google-cloud-cli（避免卸载它）
+    sudo dpkg --configure -a || true
+    sudo apt-mark hold google-cloud-cli || true
 
-          # ── Phase 2: apt purge (now there is space to write lists) ──────────
-          sudo apt-get update -qq 2>/dev/null || true
-          sudo apt-get purge -y --auto-remove \
-            '^llvm-.*' '^libllvm.*' '^php.*' '^mongodb.*' '^mysql.*' \
-            '^postgresql.*' '^dotnet-.*' '^aspnetcore-.*' \
-            azure-cli google-chrome-stable firefox powershell snapd \
-            google-cloud-cli || true
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
+    # 更新包列表，忽略错误
+    sudo apt-get update -qq --fix-missing || true
 
-          echo "=== Disk after phase-2 apt cleanup ==="
-          df -h
+    # 卸载其他不需要的包，但把 google-cloud-cli 从列表中移除
+    sudo apt-get purge -y --auto-remove \
+      '^llvm-.*' '^libllvm.*' '^php.*' '^mongodb.*' '^mysql.*' \
+      '^postgresql.*' '^dotnet-.*' '^aspnetcore-.*' \
+      azure-cli google-chrome-stable firefox powershell snapd \
+      # 注意这里没有 google-cloud-cli
+    sudo apt-get clean
+    sudo rm -rf /var/lib/apt/lists/*
+
+    echo "=== Disk after phase-2 apt cleanup ==="
+    df -h<
 
       # ── 3. Checkout this repo ───────────────────────────────────────────────
       - name: Checkout
